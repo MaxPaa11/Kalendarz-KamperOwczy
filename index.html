@@ -91,6 +91,30 @@
   .warn.show{display:block;}
   .loading{text-align:center;padding:40px 0;color:var(--ink-soft);font-size:14px;}
   .config-error{background:#FBEAE5;border:1px solid var(--danger);color:var(--danger);padding:14px;border-radius:12px;font-size:13px;line-height:1.5;}
+
+  /* Ekran PIN */
+  .pin-screen{
+    display:flex;flex-direction:column;align-items:center;
+    padding:60px 10px 20px;text-align:center;
+  }
+  .pin-screen p{color:var(--ink-soft);font-size:13.5px;margin:0 0 22px;}
+  .pin-screen input{
+    width:100%;max-width:220px;
+    padding:16px;font-size:22px;letter-spacing:6px;text-align:center;
+    border:1px solid var(--line);border-radius:12px;
+    background:var(--card);color:var(--ink);
+    margin-bottom:14px;
+  }
+  .pin-screen button{
+    width:100%;max-width:220px;padding:14px;
+    background:var(--ink);color:var(--paper);
+    border:none;border-radius:12px;font-size:15px;font-weight:700;
+  }
+  .pin-error{color:var(--danger);font-size:12.5px;margin:-6px 0 14px;min-height:16px;}
+  .change-pin{
+    background:none;border:none;color:var(--ink-soft);
+    font-size:12px;text-decoration:underline;margin-top:18px;padding:6px;
+  }
 </style>
 </head>
 <body>
@@ -127,12 +151,14 @@ const PEOPLE = [
   {id:"b", name:"Rajeczniki"},
   {id:"c", name:"NIEDOSTĘPNY"}
 ];
+const PIN_STORAGE_KEY = "kalendarz_pin_v1";
 
 let bookings = []; // { id, start: 'YYYY-MM-DD', end: 'YYYY-MM-DD', person }
 let cursor = new Date();
 cursor.setDate(1);
 let db = null;
 let docRef = null;
+let unsubscribe = null;
 let configOk = firebaseConfig.apiKey && firebaseConfig.apiKey !== "WKLEJ_TU";
 
 function pad(n){ return n.toString().padStart(2,"0"); }
@@ -164,16 +190,64 @@ async function saveBookings(){
   }
 }
 
+/* ============== PIN GATE ============== */
+
+function showPinScreen(errorMsg){
+  const app = document.getElementById('app');
+  document.getElementById('status').textContent = "";
+  app.innerHTML = `
+    <div class="pin-screen">
+      <p>Podaj kod dostępu, aby zobaczyć kalendarz.</p>
+      <input type="tel" inputmode="numeric" id="pin-input" maxlength="8" placeholder="••••">
+      <div class="pin-error">${errorMsg || ""}</div>
+      <button onclick="submitPin()">Wejdź</button>
+    </div>
+  `;
+  const input = document.getElementById('pin-input');
+  input.focus();
+  input.addEventListener('keydown', (e)=>{ if(e.key === 'Enter') submitPin(); });
+}
+
+function submitPin(){
+  const val = document.getElementById('pin-input').value.trim();
+  if(!val) return;
+  tryConnect(val);
+}
+
+function tryConnect(pin){
+  const ref = db.collection('kalendarz_' + pin).doc('rezerwacje');
+  ref.get().then(()=>{
+    localStorage.setItem(PIN_STORAGE_KEY, pin);
+    docRef = ref;
+    subscribeAndRender();
+  }).catch(()=>{
+    localStorage.removeItem(PIN_STORAGE_KEY);
+    showPinScreen("Nieprawidłowy kod. Spróbuj ponownie.");
+  });
+}
+
+function changePin(){
+  if(unsubscribe){ unsubscribe(); unsubscribe = null; }
+  localStorage.removeItem(PIN_STORAGE_KEY);
+  showPinScreen();
+}
+
+function subscribeAndRender(){
+  if(unsubscribe){ unsubscribe(); }
+  unsubscribe = docRef.onSnapshot((snap)=>{
+    const data = snap.data();
+    bookings = (data && data.list) ? data.list : [];
+    document.getElementById('status').textContent = "Połączono — zmiany widoczne dla wszystkich na żywo";
+    render();
+  }, ()=>{
+    document.getElementById('status').textContent = "Błąd połączenia z bazą danych";
+  });
+}
+
+/* ============== RENDER ============== */
+
 function render(){
   const app = document.getElementById('app');
-
-  if(!configOk){
-    app.innerHTML = `<div class="config-error">
-      Brakuje konfiguracji Firebase. Znajdź sekcję <strong>KONFIGURACJA FIREBASE</strong>
-      na górze pliku i wklej tam dane swojego projektu.
-    </div>`;
-    return;
-  }
 
   const year = cursor.getFullYear();
   const month = cursor.getMonth();
@@ -226,6 +300,7 @@ function render(){
     <button class="add-btn" onclick="openNew()">+ Nowa rezerwacja</button>
     <div class="section-title">Rezerwacje</div>
     ${listHtml}
+    <button class="change-pin" onclick="changePin()">Zmień kod dostępu</button>
   `;
 }
 
@@ -359,21 +434,25 @@ function showSheet(html){
 function closeSheet(){ document.getElementById('overlay').classList.remove('open'); }
 document.getElementById('overlay').addEventListener('click', (e)=>{ if(e.target.id === 'overlay') closeSheet(); });
 
+/* ============== INIT ============== */
+
 function init(){
-  if(!configOk){ render(); return; }
+  if(!configOk){
+    document.getElementById('app').innerHTML = `<div class="config-error">
+      Brakuje konfiguracji Firebase. Znajdź sekcję <strong>KONFIGURACJA FIREBASE</strong>
+      na górze pliku i wklej tam dane swojego projektu.
+    </div>`;
+    return;
+  }
   firebase.initializeApp(firebaseConfig);
   db = firebase.firestore();
-  docRef = db.collection('kalendarz').doc('rezerwacje');
 
-  docRef.onSnapshot((snap)=>{
-    const data = snap.data();
-    bookings = (data && data.list) ? data.list : [];
-    document.getElementById('status').textContent = "Połączono — zmiany widoczne dla wszystkich na żywo";
-    render();
-  }, (err)=>{
-    document.getElementById('status').textContent = "Błąd połączenia z bazą danych";
-    render();
-  });
+  const savedPin = localStorage.getItem(PIN_STORAGE_KEY);
+  if(savedPin){
+    tryConnect(savedPin);
+  } else {
+    showPinScreen();
+  }
 }
 
 init();
