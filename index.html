@@ -226,7 +226,11 @@ function tryConnect(pin){
   });
 }
 
-
+function changePin(){
+  if(unsubscribe){ unsubscribe(); unsubscribe = null; }
+  localStorage.removeItem(PIN_STORAGE_KEY);
+  showPinScreen();
+}
 
 function subscribeAndRender(){
   if(unsubscribe){ unsubscribe(); }
